@@ -1,6 +1,6 @@
 """
 Lake Erie Clothing Company - Meta Product Feed Generator
-Final Corrected Version for Wix Catalog V3 API
+Final Verified Version for Wix Catalog V3 API
 """
 
 import os
@@ -29,54 +29,35 @@ FEED_COLUMNS = [
 ]
 
 def fetch_all_products():
-    products = []
-    cursor = None
-
-    while True:
-        # MANDATORY: Explicitly request 'variantsInfo' in the fields array for V3
-        payload = {
-            "query": {
-                "cursorPaging": {"limit": 100},
-                "fields": ["name", "slug", "description", "media", "variantsInfo"]
-            }
+    # MANDATORY for V3: Explicitly request fields or they return as None
+    # We request 'variants' as it's the new source for price and stock in V3
+    payload = {
+        "query": {
+            "cursorPaging": {"limit": 100},
+            "fields": ["name", "slug", "description", "media", "variants"]
         }
-        if cursor:
-            payload["query"]["cursorPaging"]["cursor"] = cursor
-
-        response = requests.post(WIX_API_URL, headers=HEADERS, json=payload)
-        response.raise_for_status()
-        data = response.json()
-
-        batch = data.get("products", [])
-        products.extend(batch)
-        print(f"Fetched {len(batch)} products")
-
-        next_cursor = data.get("pagingMetadata", {}).get("cursors", {}).get("next")
-        if not next_cursor or len(batch) == 0:
-            break
-        cursor = next_cursor
-
-    return products
+    }
+    response = requests.post(WIX_API_URL, headers=HEADERS, json=payload)
+    response.raise_for_status()
+    return response.json().get("products", [])
 
 def get_v3_data(product):
-    # Wix V3 stores price and stock in variantsInfo.variants
-    variants_info = product.get("variantsInfo", {})
-    variants = variants_info.get("variants", [])
+    # Wix V3 treats all products as having variants. 
+    # Products without choices have a single 'default variant'.
+    variants = product.get("variants", [])
+    first_variant = variants[0].get("variant", {}) if variants else {}
     
-    # Use the first variant for default price and stock
-    first_variant = variants[0] if variants else {}
-    
-    # V3 Price Path: price -> actualPrice -> amount
-    price_obj = first_variant.get("price", {})
-    actual_price = price_obj.get("actualPrice", {})
+    # 1. PRICE: Extract from actualPrice inside the variant
+    price_info = first_variant.get("price", {})
+    actual_price = price_info.get("actualPrice", {})
     price = actual_price.get("amount", "0.00")
     currency = actual_price.get("currency", "USD")
     
-    # V3 Stock Path: inventory -> availabilityStatus
+    # 2. STOCK: Extract from inventoryStatus inside the variant
     inventory = first_variant.get("inventory", {})
     status = inventory.get("availabilityStatus", "")
     
-    # Map V3 status to Meta requirements
+    # Meta requires 'in stock' or 'out of stock'
     availability = "in stock" if status == "IN_STOCK" else "out of stock"
     
     return f"{float(price):.2f} {currency}", availability
@@ -103,12 +84,12 @@ def generate():
         })
         
     with open("feed.csv", "w", newline="", encoding="utf-8") as f:
-        # Header must be row 1 for Meta compatibility
+        # Ensures header is on line 1 for Meta compatibility
         writer = csv.DictWriter(f, fieldnames=FEED_COLUMNS)
         writer.writeheader()
         writer.writerows(rows)
-        # Add timestamp at very end to force Git update without breaking columns
-        f.write(f"\n# Feed Updated: {datetime.now().isoformat()}")
+        # Adds a timestamp at the very end to force Git to detect a change
+        f.write(f"\n# Updated: {datetime.now().isoformat()}")
 
 if __name__ == "__main__":
     print("Starting LECC Meta product feed generation...")
