@@ -45,28 +45,27 @@ def fetch_all_products():
     cursor = None
 
     while True:
-        payload = {
-            "query": {
-                "cursorPaging": {"limit": 100}
-            }
-        }
+        payload = {"query": {"cursorPaging": {"limit": 100}}}
         if cursor:
             payload["query"]["cursorPaging"]["cursor"] = cursor
 
-        print(f"Sending request (cursor: {cursor})")
         response = requests.post(WIX_API_URL, headers=HEADERS, json=payload)
-        print(f"Response status: {response.status_code}")
         if response.status_code != 200:
-            print(f"Response body: {response.text[:1000]}")
+            print(f"Error {response.status_code}: {response.text[:2000]}")
         response.raise_for_status()
         data = response.json()
+
+        # Debug: print first product raw to understand structure
+        if not products and data.get("products"):
+            import json
+            print("Sample product structure:")
+            print(json.dumps(data["products"][0], indent=2)[:3000])
 
         batch = data.get("products", [])
         products.extend(batch)
         print(f"Fetched {len(batch)} products")
 
-        # V3 uses cursor-based pagination
-        next_cursor = data.get("metadata", {}).get("cursors", {}).get("next")
+        next_cursor = data.get("pagingMetadata", {}).get("cursors", {}).get("next")
         if not next_cursor or len(batch) == 0:
             break
         cursor = next_cursor
@@ -81,22 +80,33 @@ def get_product_url(product):
 
 
 def get_main_image(product):
+    # V3 structure: media.mainMedia.image.url
     media = product.get("media", {})
     main_media = media.get("mainMedia", {})
-    image = main_media.get("image", {})
-    return image.get("url", "")
+    # V3 may use "image" or "mediaItem"
+    image = main_media.get("image", main_media.get("mediaItem", {}))
+    url = image.get("url", "")
+    # Wix image URLs sometimes need a size appended
+    if url and not url.startswith("http"):
+        url = "https://static.wixstatic.com/media/" + url
+    return url
 
 
 def get_price(product):
-    price_data = product.get("priceData", {})
-    price = price_data.get("price", 0)
+    # V3 structure: priceData or price
+    price_data = product.get("priceData", product.get("price", {}))
+    price = price_data.get("price", price_data.get("formatted", {}).get("price", "0"))
     currency = price_data.get("currency", "USD")
-    return f"{float(price):.2f} {currency}"
+    try:
+        return f"{float(price):.2f} {currency}"
+    except (ValueError, TypeError):
+        return f"0.00 {currency}"
 
 
 def get_availability(product):
-    inventory = product.get("stock", {})
-    in_stock = inventory.get("inStock", False)
+    # V3 structure: stock.availability or stock.inStock
+    stock = product.get("stock", {})
+    in_stock = stock.get("inStock", stock.get("availability") == "IN_STOCK")
     return "in stock" if in_stock else "out of stock"
 
 
