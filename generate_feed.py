@@ -5,7 +5,7 @@ Fetches products from Wix Stores API and generates a Meta-compatible CSV feed.
 
 import os
 import csv
-import json
+
 import requests
 
 WIX_API_KEY = os.environ["WIX_API_KEY"]
@@ -14,7 +14,7 @@ WIX_SITE_ID = os.environ["WIX_SITE_ID"]
 WIX_API_URL = "https://www.wixapis.com/stores/v1/products/query"
 
 HEADERS = {
-    "Authorization": WIX_API_KEY,
+    "Authorization": f"Bearer {WIX_API_KEY}",
     "wix-site-id": WIX_SITE_ID,
     "Content-Type": "application/json",
 }
@@ -49,7 +49,7 @@ def fetch_all_products():
         payload = {
             "query": {
                 "paging": {"limit": limit, "offset": offset},
-                "filter": json.dumps({"visible": True}),
+
             }
         }
 
