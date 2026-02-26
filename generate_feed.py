@@ -73,5 +73,17 @@ def get_main_image(product):
 
 
 def get_price(product):
-    # Updated logic: Wix V3 provides numeric price in the 'price' field within 'priceData'
-    price_data = product.get("priceData",
+    # Wix V3 provides numeric price in the 'price' field within 'priceData'
+    price_data = product.get("priceData", {})
+    price = price_data.get("price", 0)
+    currency = price_data.get("currency", "USD")
+    
+    try:
+        return f"{float(price):.2f} {currency}"
+    except (ValueError, TypeError):
+        return f"0.00 {currency}"
+
+
+def get_availability(product):
+    # Wix V3 uses 'inventoryStatus' inside the 'stock' object
+    stock = product.get("
