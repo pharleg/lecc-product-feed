@@ -1,14 +1,12 @@
 """
 Lake Erie Clothing Company - Meta Product Feed Generator
-Final Version: Optimized for Wix V3 with empty variant arrays
+Corrected for CSV Header Alignment
 """
 
 import os
 import csv
 import re
-import json
 import requests
-from datetime import datetime
 
 WIX_API_KEY = os.environ["WIX_API_KEY"]
 WIX_SITE_ID = os.environ["WIX_SITE_ID"]
@@ -28,7 +26,7 @@ FEED_COLUMNS = [
 ]
 
 def fetch_all_products():
-    # We MUST explicitly request these fields in V3 or they return null
+    # Explicitly request the fields to avoid null values in V3
     payload = {
         "query": {
             "fields": ["priceData", "stock", "name", "slug", "description", "media"]
@@ -40,7 +38,6 @@ def fetch_all_products():
     return data.get("products", [])
 
 def get_price(product):
-    # In Wix V3, priceData contains the 'price' amount
     price_data = product.get("priceData", {})
     price = price_data.get("price", 0)
     currency = price_data.get("currency", "USD")
@@ -50,7 +47,6 @@ def get_price(product):
         return f"0.00 {currency}"
 
 def get_availability(product):
-    # In Wix V3, stock contains 'inventoryStatus'
     stock = product.get("stock", {})
     status = stock.get("inventoryStatus", "")
     if status in ["IN_STOCK", "PARTIALLY_OUT_OF_STOCK"]:
@@ -75,9 +71,9 @@ def generate():
             "google_product_category": "Apparel & Accessories > Clothing"
         })
         
+    # Open with newline="" to prevent double spacing issues on some systems
     with open("feed.csv", "w", newline="", encoding="utf-8") as f:
-        # We add a timestamp comment so GitHub ALWAYS sees a file change
-        f.write(f"# Generated at: {datetime.now().isoformat()}\n")
+        # Removed the timestamp comment to prevent column count errors
         writer = csv.DictWriter(f, fieldnames=FEED_COLUMNS)
         writer.writeheader()
         writer.writerows(rows)
