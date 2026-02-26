@@ -1,6 +1,6 @@
 """
 Lake Erie Clothing Company - Meta Product Feed Generator
-Diagnostic Version: Full Product Dump
+Final Version: Explicit Field Requests and Variant Fallbacks for Wix V3
 """
 
 import os
@@ -9,6 +9,7 @@ import re
 import json
 import requests
 
+# Environment Variables from GitHub Secrets
 WIX_API_KEY = os.environ["WIX_API_KEY"]
 WIX_SITE_ID = os.environ["WIX_SITE_ID"]
 WIX_ACCOUNT_ID = os.environ["WIX_ACCOUNT_ID"]
@@ -36,11 +37,12 @@ def fetch_all_products():
     cursor = None
     
     while True:
+        # We explicitly request 'priceData', 'stock', and 'variants' 
+        # as V3 often returns them as null unless specifically asked for.
         payload = {
             "query": {
                 "cursorPaging": {"limit": 100},
-                # We are requesting every possible field to find where the data is hidden
-                "fields": ["priceData", "stock", "variants", "name", "slug", "description", "media", "convertedPriceData"]
+                "fields": ["priceData", "stock", "variants", "name", "slug", "description", "media"]
             }
         }
         if cursor:
@@ -51,13 +53,6 @@ def fetch_all_products():
         data = response.json()
 
         batch = data.get("products", [])
-        
-        # DIAGNOSTIC: Print the full JSON of the first product
-        if not products and batch:
-            print("--- FULL RAW PRODUCT DATA (DIAGNOSTIC) ---")
-            print(json.dumps(batch[0], indent=2))
-            print("--- END DIAGNOSTIC ---")
-
         products.extend(batch)
         print(f"Fetched {len(batch)} products")
 
@@ -66,17 +61,19 @@ def fetch_all_products():
             break
         cursor = next_cursor
 
+    print(f"Total products fetched: {len(products)}")
     return products
 
 def get_price(product):
-    # Search top-level, then convertedPriceData, then variants
-    price_data = product.get("priceData") or product.get("convertedPriceData")
+    # 1. Try top-level priceData
+    price_data = product.get("priceData")
     
+    # 2. Fallback to the first variant (required for many V3 products)
     if not price_data:
         variants = product.get("variants", [])
         if variants:
-            v_obj = variants[0].get("variant", {})
-            price_data = v_obj.get("priceData") or v_obj.get("convertedPriceData")
+            # Check for nested variant object containing priceData
+            price_data = variants[0].get("variant", {}).get("priceData")
 
     if not price_data:
         return "0.00 USD"
@@ -85,12 +82,14 @@ def get_price(product):
     currency = price_data.get("currency", "USD")
     try:
         return f"{float(price):.2f} {currency}"
-    except:
+    except (ValueError, TypeError):
         return f"0.00 {currency}"
 
 def get_availability(product):
+    # 1. Try top-level stock
     stock = product.get("stock")
     
+    # 2. Fallback to the first variant stock
     if not stock:
         variants = product.get("variants", [])
         if variants:
@@ -99,16 +98,25 @@ def get_availability(product):
     if not stock:
         return "out of stock"
 
+    # Wix V3 uses 'inventoryStatus'
     status = stock.get("inventoryStatus", "")
-    if status in ["IN_STOCK", "PARTIALLY_OUT_OF_STOCK"]:
+    if status == "IN_STOCK" or status == "PARTIALLY_OUT_OF_STOCK":
         return "in stock"
     return "out of stock"
+
+def get_main_image(product):
+    media = product.get("media", {})
+    main = media.get("main", {})
+    image = main.get("image", {})
+    return image.get("url", "")
 
 def build_feed_rows(products):
     rows = []
     for product in products:
-        title = product.get("name", "No Title")
-        desc = re.sub(r"<[^>]+>", "", product.get("description", "")).strip()
+        title = product.get("name", "Untitled Product")
+        desc = product.get("description", "")
+        # Clean up HTML tags for the feed
+        desc = re.sub(r"<[^>]+>", "", desc).strip()
         
         rows.append({
             "id": product.get("id"),
@@ -118,7 +126,7 @@ def build_feed_rows(products):
             "condition": "new",
             "price": get_price(product),
             "link": f"{STORE_BASE_URL}/product-page/{product.get('slug', '')}",
-            "image_link": product.get("media", {}).get("main", {}).get("image", {}).get("url", ""),
+            "image_link": get_main_image(product),
             "brand": BRAND,
             "google_product_category": GOOGLE_CATEGORY,
         })
@@ -131,6 +139,8 @@ def write_csv(rows):
         writer.writerows(rows)
 
 if __name__ == "__main__":
-    prods = fetch_all_products()
-    write_csv(build_feed_rows(prods))
-    print(f"Done! Processed {len(prods)} products.")
+    print("Starting LECC Meta product feed generation...")
+    all_products = fetch_all_products()
+    feed_data = build_feed_rows(all_products)
+    write_csv(feed_data)
+    print(f"Done! Feed generated with {len(feed_data)} products.")
