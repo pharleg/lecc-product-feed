@@ -1,6 +1,6 @@
 """
 Lake Erie Clothing Company - Meta Product Feed Generator
-Corrected for CSV Header Alignment
+Final Corrected Version for Wix V3 API
 """
 
 import os
@@ -26,54 +26,54 @@ FEED_COLUMNS = [
 ]
 
 def fetch_all_products():
-    # Explicitly request the fields to avoid null values in V3
+    # We must explicitly request 'variants' and 'media' fields in V3
     payload = {
         "query": {
-            "fields": ["priceData", "stock", "name", "slug", "description", "media"]
+            "fields": ["name", "slug", "description", "media", "variants"]
         }
     }
     response = requests.post(WIX_API_URL, headers=HEADERS, json=payload)
     response.raise_for_status()
-    data = response.json()
-    return data.get("products", [])
+    return response.json().get("products", [])
 
-def get_price(product):
-    price_data = product.get("priceData", {})
-    price = price_data.get("price", 0)
-    currency = price_data.get("currency", "USD")
-    try:
-        return f"{float(price):.2f} {currency}"
-    except (ValueError, TypeError):
-        return f"0.00 {currency}"
-
-def get_availability(product):
-    stock = product.get("stock", {})
-    status = stock.get("inventoryStatus", "")
-    if status in ["IN_STOCK", "PARTIALLY_OUT_OF_STOCK"]:
-        return "in stock"
-    return "out of stock"
+def get_v3_data(product):
+    # Wix V3 stores price and stock in the 'variants' array
+    variants = product.get("variants", [])
+    first_variant = variants[0].get("variant", {}) if variants else {}
+    
+    # Extract Price
+    price_info = first_variant.get("price", {})
+    price = price_info.get("actualPrice", {}).get("amount", "0.00")
+    currency = price_info.get("actualPrice", {}).get("currency", "USD")
+    
+    # Extract Stock Status
+    stock_info = first_variant.get("stock", {})
+    status = stock_info.get("inventoryStatus", "OUT_OF_STOCK")
+    availability = "in stock" if status == "IN_STOCK" else "out of stock"
+    
+    return f"{price} {currency}", availability
 
 def generate():
     products = fetch_all_products()
     rows = []
     for p in products:
+        price, availability = get_v3_data(p)
         desc = re.sub(r"<[^>]+>", "", p.get("description", "")).strip()
+        
         rows.append({
             "id": p.get("id"),
             "title": p.get("name"),
-            "description": desc[:9999] if desc else p.get("name"),
-            "availability": get_availability(p),
+            "description": desc[:9999] or p.get("name"),
+            "availability": availability,
             "condition": "new",
-            "price": get_price(p),
+            "price": price,
             "link": f"https://www.lakeerieclothing.com/product-page/{p.get('slug')}",
             "image_link": p.get("media", {}).get("main", {}).get("image", {}).get("url", ""),
             "brand": "Lake Erie Clothing Company",
             "google_product_category": "Apparel & Accessories > Clothing"
         })
         
-    # Open with newline="" to prevent double spacing issues on some systems
     with open("feed.csv", "w", newline="", encoding="utf-8") as f:
-        # Removed the timestamp comment to prevent column count errors
         writer = csv.DictWriter(f, fieldnames=FEED_COLUMNS)
         writer.writeheader()
         writer.writerows(rows)
