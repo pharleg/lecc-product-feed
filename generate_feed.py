@@ -6,6 +6,7 @@ Fetches products from Wix Stores Catalog V3 API and generates a Meta-compatible 
 import os
 import csv
 import re
+import json
 import requests
 
 WIX_API_KEY = os.environ["WIX_API_KEY"]
@@ -22,16 +23,8 @@ HEADERS = {
 }
 
 FEED_COLUMNS = [
-    "id",
-    "title",
-    "description",
-    "availability",
-    "condition",
-    "price",
-    "link",
-    "image_link",
-    "brand",
-    "google_product_category",
+    "id", "title", "description", "availability", "condition",
+    "price", "link", "image_link", "brand", "google_product_category",
 ]
 
 BRAND = "Lake Erie Clothing Company"
@@ -40,7 +33,6 @@ GOOGLE_CATEGORY = "Apparel & Accessories > Clothing"
 
 
 def fetch_all_products():
-    """Fetch all products from Wix Catalog V3 API with pagination."""
     products = []
     cursor = None
 
@@ -55,11 +47,12 @@ def fetch_all_products():
         response.raise_for_status()
         data = response.json()
 
-        # Debug: print first product raw to understand structure
         if not products and data.get("products"):
-            import json
-            print("Sample product structure:")
-            print(json.dumps(data["products"][0], indent=2)[:3000])
+            p = data["products"][0]
+            print("=== PRICE FIELDS ===")
+            print(json.dumps({k: v for k, v in p.items() if "price" in k.lower() or "Price" in k}, indent=2))
+            print("=== STOCK FIELDS ===")
+            print(json.dumps({k: v for k, v in p.items() if "stock" in k.lower() or "inventor" in k.lower() or "availab" in k.lower()}, indent=2))
 
         batch = data.get("products", [])
         products.extend(batch)
@@ -80,20 +73,13 @@ def get_product_url(product):
 
 
 def get_main_image(product):
-    # V3 structure: media.mainMedia.image.url
     media = product.get("media", {})
-    main_media = media.get("mainMedia", {})
-    # V3 may use "image" or "mediaItem"
-    image = main_media.get("image", main_media.get("mediaItem", {}))
-    url = image.get("url", "")
-    # Wix image URLs sometimes need a size appended
-    if url and not url.startswith("http"):
-        url = "https://static.wixstatic.com/media/" + url
-    return url
+    main = media.get("main", {})
+    image = main.get("image", {})
+    return image.get("url", "")
 
 
 def get_price(product):
-    # V3 structure: priceData or price
     price_data = product.get("priceData", product.get("price", {}))
     price = price_data.get("price", price_data.get("formatted", {}).get("price", "0"))
     currency = price_data.get("currency", "USD")
@@ -104,7 +90,6 @@ def get_price(product):
 
 
 def get_availability(product):
-    # V3 structure: stock.availability or stock.inStock
     stock = product.get("stock", {})
     in_stock = stock.get("inStock", stock.get("availability") == "IN_STOCK")
     return "in stock" if in_stock else "out of stock"
