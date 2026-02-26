@@ -14,68 +14,83 @@ HEADERS = {
 }
 
 def fetch_all():
-    # We are asking for EVERY possible field that could hold price/stock
+    # We use a broad field request to ensure everything is captured
     payload = {
         "query": {
-            "fields": ["priceData", "stock", "variants", "variantsInfo", "inventory"]
+            "fields": ["name", "slug", "description", "media", "inventory", "actualPriceRange"]
         }
     }
     r = requests.post(WIX_API_URL, headers=HEADERS, json=payload)
     r.raise_for_status()
     data = r.json()
-    prods = data.get("products", [])
-    
-    if prods:
-        print("--- DIAGNOSTIC DATA ---")
-        # This will print the first product structure to your logs
-        print(json.dumps(prods[0], indent=2))
-        
-    return prods
+    return data.get("products", [])
 
 def get_price(p):
-    # Try the 4 most common Wix V3 price locations
-    price_obj = p.get("priceData") or p.get("variantsInfo", {}).get("variants", [{}])[0].get("price")
-    if not price_obj and p.get("variants"):
-        price_obj = p["variants"][0].get("variant", {}).get("priceData")
+    # Based on your logs, the price is in actualPriceRange -> minValue -> amount
+    price_range = p.get("actualPriceRange", {})
+    min_val = price_range.get("minValue", {})
+    amount = min_val.get("amount", "0.00")
     
-    val = price_obj.get("price") or price_obj.get("amount") or "0.00"
-    cur = price_obj.get("currency") or "USD"
-    return f"{float(val):.2f} {cur}"
+    # Currency usually defaults to USD if not found, but we'll try to find it
+    currency = min_val.get("currency", "USD")
+    
+    try:
+        return f"{float(amount):.2f} {currency}"
+    except (ValueError, TypeError):
+        return f"0.00 USD"
 
 def get_stock(p):
-    # Try the 3 most common Wix V3 stock locations
-    stock_obj = p.get("stock") or p.get("inventory") or p.get("variantsInfo", {}).get("variants", [{}])[0].get("inventory")
-    status = stock_obj.get("inventoryStatus") or stock_obj.get("availabilityStatus") or ""
-    return "in stock" if status in ["IN_STOCK", "AVAILABLE"] else "out of stock"
+    # Based on your logs, stock is in inventory -> availabilityStatus
+    inventory = p.get("inventory", {})
+    status = inventory.get("availabilityStatus", "")
+    
+    if status == "IN_STOCK":
+        return "in stock"
+    return "out of stock"
 
 def run():
     products = fetch_all()
     rows = []
-    # This dummy ID forces Git to see a change every single time
-    sync_id = datetime.now().strftime("%Y%m%d%H%M%S")
+    
+    # Sync ID ensures the file content is unique every time to force GitHub to update
+    sync_id = datetime.now().strftime("%Y%m%d%H%M")
     
     for p in products:
-        price = get_price(p)
-        stock = get_stock(p)
-        desc = re.sub(r"<[^>]+>", "", p.get("description", "")).strip()
+        price_str = get_price(p)
+        stock_str = get_stock(p)
+        
+        # Clean description
+        desc = p.get("description", "")
+        if not desc:
+            desc = p.get("name", "")
+        desc = re.sub(r"<[^>]+>", "", desc).strip()
         
         rows.append({
             "id": p.get("id"),
             "title": p.get("name"),
-            "description": f"{desc[:5000]} (Sync:{sync_id})", # Forces file change
-            "availability": stock,
+            "description": f"{desc[:5000]}", 
+            "availability": stock_str,
             "condition": "new",
-            "price": price,
+            "price": price_str,
             "link": f"https://www.lakeerieclothing.com/product-page/{p.get('slug')}",
             "image_link": p.get("media", {}).get("main", {}).get("image", {}).get("url", ""),
             "brand": "Lake Erie Clothing Company",
-            "google_product_category": "Apparel & Accessories > Clothing"
+            "google_product_category": "Apparel & Accessories > Clothing",
+            "sync_id": sync_id # This column forces a file change so Git commits it
         })
         
+    if not rows:
+        print("No products found to write.")
+        return
+
+    fieldnames = list(rows[0].keys())
+    
     with open("feed.csv", "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 
 if __name__ == "__main__":
+    print("Starting LECC Meta product feed generation...")
     run()
+    print("Process Complete.")
