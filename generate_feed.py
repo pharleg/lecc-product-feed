@@ -86,4 +86,56 @@ def get_price(product):
 
 def get_availability(product):
     # Wix V3 uses 'inventoryStatus' inside the 'stock' object
-    stock = product.get("
+    stock = product.get("stock", {})
+    status = stock.get("inventoryStatus", "")
+    
+    # Meta requires 'in stock' or 'out of stock' strings
+    if status == "IN_STOCK" or status == "PARTIALLY_OUT_OF_STOCK":
+        return "in stock"
+    return "out of stock"
+
+
+def build_feed_rows(products):
+    rows = []
+    for product in products:
+        product_id = product.get("id", "")
+        title = product.get("name", "")
+        description = product.get("description", "")
+        # Strip HTML tags
+        description = re.sub(r"<[^>]+>", "", description).strip()
+        description = description[:9999] if description else title
+
+        row = {
+            "id": product_id,
+            "title": title,
+            "description": description,
+            "availability": get_availability(product),
+            "condition": "new",
+            "price": get_price(product),
+            "link": get_product_url(product),
+            "image_link": get_main_image(product),
+            "brand": BRAND,
+            "google_product_category": GOOGLE_CATEGORY,
+        }
+        rows.append(row)
+    return rows
+
+
+def write_csv(rows, output_path="feed.csv"):
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=FEED_COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"Feed written to {output_path} ({len(rows)} products)")
+
+
+def main():
+    print("Starting LECC Meta product feed generation...")
+    products = fetch_all_products()
+    rows = build_feed_rows(products)
+    write_csv(rows)
+    print("Done!")
+
+
+if __name__ == "__main__":
+    main()
