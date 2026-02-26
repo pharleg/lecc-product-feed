@@ -1,4 +1,13 @@
-import os, csv, re, requests, json
+"""
+Lake Erie Clothing Company - Meta Product Feed Generator
+Final Version: Optimized for Wix V3 with empty variant arrays
+"""
+
+import os
+import csv
+import re
+import json
+import requests
 from datetime import datetime
 
 WIX_API_KEY = os.environ["WIX_API_KEY"]
@@ -13,49 +22,53 @@ HEADERS = {
     "Content-Type": "application/json",
 }
 
-def fetch_products():
-    # Explicitly request variant data where V3 stores price/stock
-    payload = {"query": {"fields": ["variants", "name", "slug", "description", "media"]}}
+FEED_COLUMNS = [
+    "id", "title", "description", "availability", "condition",
+    "price", "link", "image_link", "brand", "google_product_category",
+]
+
+def fetch_all_products():
+    # We MUST explicitly request these fields in V3 or they return null
+    payload = {
+        "query": {
+            "fields": ["priceData", "stock", "name", "slug", "description", "media"]
+        }
+    }
     response = requests.post(WIX_API_URL, headers=HEADERS, json=payload)
     response.raise_for_status()
     data = response.json()
-    
-    # FORCED DIAGNOSTIC: This will show up in your GitHub Action Logs
-    if data.get("products"):
-        print("--- DEBUG: FIRST PRODUCT RAW VARIANT DATA ---")
-        print(json.dumps(data["products"][0].get("variants", [])[:1], indent=2))
-        
     return data.get("products", [])
 
-def get_v3_data(product):
-    # Wix V3 treats all products as having at least one variant
-    variants = product.get("variants", [])
-    first_variant = variants[0].get("variant", {}) if variants else {}
-    
-    # Extract Price
-    price_info = first_variant.get("price", {})
-    price = price_info.get("actualPrice", {}).get("amount", "0.00")
-    
-    # Extract Stock Status
-    stock_info = first_variant.get("stock", {})
-    status = stock_info.get("inventoryStatus", "OUT_OF_STOCK")
-    availability = "in stock" if status == "IN_STOCK" else "out of stock"
-    
-    return price, availability
+def get_price(product):
+    # In Wix V3, priceData contains the 'price' amount
+    price_data = product.get("priceData", {})
+    price = price_data.get("price", 0)
+    currency = price_data.get("currency", "USD")
+    try:
+        return f"{float(price):.2f} {currency}"
+    except (ValueError, TypeError):
+        return f"0.00 {currency}"
+
+def get_availability(product):
+    # In Wix V3, stock contains 'inventoryStatus'
+    stock = product.get("stock", {})
+    status = stock.get("inventoryStatus", "")
+    if status in ["IN_STOCK", "PARTIALLY_OUT_OF_STOCK"]:
+        return "in stock"
+    return "out of stock"
 
 def generate():
-    products = fetch_products()
+    products = fetch_all_products()
     rows = []
     for p in products:
-        price, availability = get_v3_data(p)
         desc = re.sub(r"<[^>]+>", "", p.get("description", "")).strip()
         rows.append({
             "id": p.get("id"),
             "title": p.get("name"),
-            "description": desc[:9999] or p.get("name"),
-            "availability": availability,
+            "description": desc[:9999] if desc else p.get("name"),
+            "availability": get_availability(p),
             "condition": "new",
-            "price": f"{price} USD",
+            "price": get_price(p),
             "link": f"https://www.lakeerieclothing.com/product-page/{p.get('slug')}",
             "image_link": p.get("media", {}).get("main", {}).get("image", {}).get("url", ""),
             "brand": "Lake Erie Clothing Company",
@@ -63,12 +76,13 @@ def generate():
         })
         
     with open("feed.csv", "w", newline="", encoding="utf-8") as f:
-        # ADD A TIMESTAMP COMMENT to force Git to see a 'change' every run
-        f.write(f"# Updated: {datetime.now().isoformat()}\n")
-        writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+        # We add a timestamp comment so GitHub ALWAYS sees a file change
+        f.write(f"# Generated at: {datetime.now().isoformat()}\n")
+        writer = csv.DictWriter(f, fieldnames=FEED_COLUMNS)
         writer.writeheader()
         writer.writerows(rows)
 
 if __name__ == "__main__":
+    print("Starting LECC Meta product feed generation...")
     generate()
     print("Feed generation complete.")
