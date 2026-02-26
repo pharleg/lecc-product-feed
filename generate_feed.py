@@ -1,6 +1,6 @@
 """
 Lake Erie Clothing Company - Meta Product Feed Generator
-Final Version: Corrected V3 Field Selection and Variant Mapping
+Final Brute-Force Version with Full Data Logging
 """
 
 import os
@@ -9,11 +9,9 @@ import re
 import json
 import requests
 
-# Environment Variables from GitHub Secrets
 WIX_API_KEY = os.environ["WIX_API_KEY"]
 WIX_SITE_ID = os.environ["WIX_SITE_ID"]
 WIX_ACCOUNT_ID = os.environ["WIX_ACCOUNT_ID"]
-
 WIX_API_URL = "https://www.wixapis.com/stores/v3/products/query"
 
 HEADERS = {
@@ -28,81 +26,79 @@ FEED_COLUMNS = [
     "price", "link", "image_link", "brand", "google_product_category",
 ]
 
-BRAND = "Lake Erie Clothing Company"
-STORE_BASE_URL = "https://www.lakeerieclothing.com"
-GOOGLE_CATEGORY = "Apparel & Accessories > Clothing"
-
 def fetch_all_products():
-    products = []
-    cursor = None
-
-    while True:
-        # MANDATORY: Explicitly request 'variants' and 'priceData' in V3
-        payload = {
-            "query": {
-                "cursorPaging": {"limit": 100},
-                "fields": ["name", "slug", "description", "media", "variants", "priceData", "stock"]
-            }
+    payload = {
+        "query": {
+            "fields": ["priceData", "stock", "variants", "name", "slug", "description", "media", "inventory"]
         }
-        if cursor:
-            payload["query"]["cursorPaging"]["cursor"] = cursor
-
-        response = requests.post(WIX_API_URL, headers=HEADERS, json=payload)
-        response.raise_for_status()
-        data = response.json()
-
-        batch = data.get("products", [])
-        products.extend(batch)
-        print(f"Fetched {len(batch)} products")
-
-        next_cursor = data.get("pagingMetadata", {}).get("cursors", {}).get("next")
-        if not next_cursor or len(batch) == 0:
-            break
-        cursor = next_cursor
-
+    }
+    response = requests.post(WIX_API_URL, headers=HEADERS, json=payload)
+    response.raise_for_status()
+    data = response.json()
+    
+    products = data.get("products", [])
+    
+    # CRITICAL LOGGING: This will show us the REAL structure in GitHub Actions
+    if products:
+        print("--- RAW API RESPONSE PREVIEW (FIRST ITEM) ---")
+        print(json.dumps(products[0], indent=2))
+        print("--- END PREVIEW ---")
+        
     return products
 
-def get_v3_price_and_stock(product):
-    # In V3, pricing and inventory are most reliable at the variant level
-    variants = product.get("variants", [])
-    # Even simple products have a default variant at index 0
-    first_variant = variants[0].get("variant", {}) if variants else {}
+def get_v3_price(p):
+    # Try multiple V3 paths
+    price_obj = p.get("priceData") or p.get("convertedPriceData")
     
-    # --- Price Logic ---
-    # Try variant-level priceData first, then fallback to top-level
-    price_data = first_variant.get("priceData") or product.get("priceData") or {}
-    price = price_data.get("price", 0)
-    currency = price_data.get("currency", "USD")
+    # Check inside first variant if top-level is empty
+    if not price_obj and p.get("variants"):
+        v = p["variants"][0].get("variant", {})
+        price_obj = v.get("priceData") or v.get("price")
+
+    if not price_obj:
+        return "0.00 USD"
     
-    # --- Stock Logic ---
-    # Try variant-level stock first, then fallback to top-level
-    stock = first_variant.get("stock") or product.get("stock") or {}
-    status = stock.get("inventoryStatus", "")
+    price = price_obj.get("price") or price_obj.get("amount") or 0
+    currency = price_obj.get("currency") or "USD"
+    return f"{float(price):.2f} {currency}"
+
+def get_v3_stock(p):
+    # Check top-level stock or inventory
+    stock_obj = p.get("stock") or p.get("inventory")
     
-    # Meta specific availability strings
-    availability = "in stock" if status == "IN_STOCK" else "out of stock"
-    
-    return f"{float(price):.2f} {currency}", availability
+    # Check inside first variant
+    if not stock_obj and p.get("variants"):
+        v = p["variants"][0].get("variant", {})
+        stock_obj = v.get("stock") or v.get("inventory")
+
+    if not stock_obj:
+        return "out of stock"
+
+    # Try different Wix status keys
+    status = stock_obj.get("inventoryStatus") or stock_obj.get("status") or ""
+    if status in ["IN_STOCK", "PARTIALLY_OUT_OF_STOCK", "AVAILABLE"]:
+        return "in stock"
+    return "out of stock"
 
 def generate():
     products = fetch_all_products()
     rows = []
-    
     for p in products:
-        price, availability = get_v3_price_and_stock(p)
+        price = get_v3_price(p)
+        stock = get_v3_stock(p)
         desc = re.sub(r"<[^>]+>", "", p.get("description", "")).strip()
         
         rows.append({
             "id": p.get("id"),
             "title": p.get("name"),
             "description": desc[:9999] or p.get("name"),
-            "availability": availability,
+            "availability": stock,
             "condition": "new",
             "price": price,
-            "link": f"{STORE_BASE_URL}/product-page/{p.get('slug')}",
+            "link": f"https://www.lakeerieclothing.com/product-page/{p.get('slug')}",
             "image_link": p.get("media", {}).get("main", {}).get("image", {}).get("url", ""),
-            "brand": BRAND,
-            "google_product_category": GOOGLE_CATEGORY,
+            "brand": "Lake Erie Clothing Company",
+            "google_product_category": "Apparel & Accessories > Clothing"
         })
         
     with open("feed.csv", "w", newline="", encoding="utf-8") as f:
@@ -111,6 +107,5 @@ def generate():
         writer.writerows(rows)
 
 if __name__ == "__main__":
-    print("Starting LECC Meta product feed generation...")
     generate()
-    print("Feed generation complete.")
+    print("Process Complete.")
