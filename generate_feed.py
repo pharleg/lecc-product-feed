@@ -73,7 +73,7 @@ def get_main_image(product):
 
 
 def get_price(product):
-    # Wix V3 provides numeric price in the 'price' field within 'priceData'
+    # Wix V3 uses 'price' inside 'priceData'
     price_data = product.get("priceData", {})
     price = price_data.get("price", 0)
     currency = price_data.get("currency", "USD")
@@ -89,7 +89,6 @@ def get_availability(product):
     stock = product.get("stock", {})
     status = stock.get("inventoryStatus", "")
     
-    # Meta requires 'in stock' or 'out of stock' strings
     if status == "IN_STOCK" or status == "PARTIALLY_OUT_OF_STOCK":
         return "in stock"
     return "out of stock"
@@ -101,7 +100,6 @@ def build_feed_rows(products):
         product_id = product.get("id", "")
         title = product.get("name", "")
         description = product.get("description", "")
-        # Strip HTML tags
         description = re.sub(r"<[^>]+>", "", description).strip()
         description = description[:9999] if description else title
 
