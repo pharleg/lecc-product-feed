@@ -12,7 +12,7 @@ WIX_API_KEY = os.environ["WIX_API_KEY"]
 WIX_SITE_ID = os.environ["WIX_SITE_ID"]
 WIX_ACCOUNT_ID = os.environ["WIX_ACCOUNT_ID"]
 
-WIX_API_URL = "https://www.wixapis.com/catalog/v3/products/query"
+WIX_API_URL = "https://www.wixapis.com/stores/v3/products/query"
 
 HEADERS = {
     "Authorization": WIX_API_KEY,
