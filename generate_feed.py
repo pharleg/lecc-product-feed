@@ -5,17 +5,19 @@ Fetches products from Wix Stores API and generates a Meta-compatible CSV feed.
 
 import os
 import csv
-
+import re
 import requests
 
 WIX_API_KEY = os.environ["WIX_API_KEY"]
 WIX_SITE_ID = os.environ["WIX_SITE_ID"]
+WIX_ACCOUNT_ID = os.environ["WIX_ACCOUNT_ID"]
 
 WIX_API_URL = "https://www.wixapis.com/stores/v1/products/query"
 
 HEADERS = {
-    "Authorization": f"Bearer {WIX_API_KEY}",
+    "Authorization": WIX_API_KEY,
     "wix-site-id": WIX_SITE_ID,
+    "wix-account-id": WIX_ACCOUNT_ID,
     "Content-Type": "application/json",
 }
 
@@ -35,7 +37,6 @@ FEED_COLUMNS = [
 
 BRAND = "Lake Erie Clothing Company"
 STORE_BASE_URL = "https://www.lakeerieclothing.com"
-# Google product category for apparel
 GOOGLE_CATEGORY = "Apparel & Accessories > Clothing"
 
 
@@ -49,7 +50,6 @@ def fetch_all_products():
         payload = {
             "query": {
                 "paging": {"limit": limit, "offset": offset},
-
             }
         }
 
@@ -61,7 +61,6 @@ def fetch_all_products():
         products.extend(batch)
         print(f"Fetched {len(batch)} products (offset {offset})")
 
-        # Check if there are more pages
         total = data.get("metadata", {}).get("total", 0)
         offset += limit
         if offset >= total or len(batch) == 0:
@@ -72,13 +71,11 @@ def fetch_all_products():
 
 
 def get_product_url(product):
-    """Build the product URL from slug."""
     slug = product.get("slug", "")
     return f"{STORE_BASE_URL}/product-page/{slug}" if slug else ""
 
 
 def get_main_image(product):
-    """Get the first product image URL."""
     media = product.get("media", {})
     main_media = media.get("mainMedia", {})
     image = main_media.get("image", {})
@@ -86,7 +83,6 @@ def get_main_image(product):
 
 
 def get_price(product):
-    """Get the formatted price string (e.g. '50.00 USD')."""
     price_data = product.get("priceData", {})
     price = price_data.get("price", 0)
     currency = price_data.get("currency", "USD")
@@ -94,25 +90,18 @@ def get_price(product):
 
 
 def get_availability(product):
-    """Return 'in stock' or 'out of stock'."""
     inventory = product.get("stock", {})
     in_stock = inventory.get("inStock", False)
     return "in stock" if in_stock else "out of stock"
 
 
 def build_feed_rows(products):
-    """Convert Wix products to Meta feed rows."""
     rows = []
-
     for product in products:
         product_id = product.get("id", "")
         title = product.get("name", "")
         description = product.get("description", "")
-
-        # Strip HTML tags from description if present
-        import re
         description = re.sub(r"<[^>]+>", "", description).strip()
-        # Truncate to 9999 chars (Meta limit)
         description = description[:9999] if description else title
 
         row = {
@@ -128,12 +117,10 @@ def build_feed_rows(products):
             "google_product_category": GOOGLE_CATEGORY,
         }
         rows.append(row)
-
     return rows
 
 
 def write_csv(rows, output_path="feed.csv"):
-    """Write rows to CSV file."""
     with open(output_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=FEED_COLUMNS)
         writer.writeheader()
