@@ -47,13 +47,6 @@ def fetch_all_products():
         response.raise_for_status()
         data = response.json()
 
-        if not products and data.get("products"):
-            p = data["products"][0]
-            print("=== PRICE FIELDS ===")
-            print(json.dumps({k: v for k, v in p.items() if "price" in k.lower() or "Price" in k}, indent=2))
-            print("=== STOCK FIELDS ===")
-            print(json.dumps({k: v for k, v in p.items() if "stock" in k.lower() or "inventor" in k.lower() or "availab" in k.lower()}, indent=2))
-
         batch = data.get("products", [])
         products.extend(batch)
         print(f"Fetched {len(batch)} products")
@@ -80,9 +73,13 @@ def get_main_image(product):
 
 
 def get_price(product):
-    price_data = product.get("priceData", product.get("price", {}))
-    price = price_data.get("price", price_data.get("formatted", {}).get("price", "0"))
+    # Wix V3 puts price information inside the priceData object
+    price_data = product.get("priceData", {})
+    
+    # We want the numeric 'price' field; default to 0 if missing
+    price = price_data.get("price", 0)
     currency = price_data.get("currency", "USD")
+    
     try:
         return f"{float(price):.2f} {currency}"
     except (ValueError, TypeError):
@@ -90,9 +87,14 @@ def get_price(product):
 
 
 def get_availability(product):
+    # Wix V3 uses stock.inventoryStatus to report if an item is available
     stock = product.get("stock", {})
-    in_stock = stock.get("inStock", stock.get("availability") == "IN_STOCK")
-    return "in stock" if in_stock else "out of stock"
+    status = stock.get("inventoryStatus", "")
+    
+    # Meta (Facebook/Instagram) requires specific strings: 'in stock' or 'out of stock'
+    if status == "IN_STOCK" or status == "PARTIALLY_OUT_OF_STOCK":
+        return "in stock"
+    return "out of stock"
 
 
 def build_feed_rows(products):
@@ -101,6 +103,7 @@ def build_feed_rows(products):
         product_id = product.get("id", "")
         title = product.get("name", "")
         description = product.get("description", "")
+        # Strip HTML tags from description for CSV compatibility
         description = re.sub(r"<[^>]+>", "", description).strip()
         description = description[:9999] if description else title
 
