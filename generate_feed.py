@@ -1,13 +1,5 @@
-"""
-Lake Erie Clothing Company - Meta Product Feed Generator
-Final Brute-Force Version with Full Data Logging
-"""
-
-import os
-import csv
-import re
-import json
-import requests
+import os, csv, re, json, requests
+from datetime import datetime
 
 WIX_API_KEY = os.environ["WIX_API_KEY"]
 WIX_SITE_ID = os.environ["WIX_SITE_ID"]
@@ -21,77 +13,56 @@ HEADERS = {
     "Content-Type": "application/json",
 }
 
-FEED_COLUMNS = [
-    "id", "title", "description", "availability", "condition",
-    "price", "link", "image_link", "brand", "google_product_category",
-]
-
-def fetch_all_products():
+def fetch_all():
+    # We are asking for EVERY possible field that could hold price/stock
     payload = {
         "query": {
-            "fields": ["priceData", "stock", "variants", "name", "slug", "description", "media", "inventory"]
+            "fields": ["priceData", "stock", "variants", "variantsInfo", "inventory"]
         }
     }
-    response = requests.post(WIX_API_URL, headers=HEADERS, json=payload)
-    response.raise_for_status()
-    data = response.json()
+    r = requests.post(WIX_API_URL, headers=HEADERS, json=payload)
+    r.raise_for_status()
+    data = r.json()
+    prods = data.get("products", [])
     
-    products = data.get("products", [])
-    
-    # CRITICAL LOGGING: This will show us the REAL structure in GitHub Actions
-    if products:
-        print("--- RAW API RESPONSE PREVIEW (FIRST ITEM) ---")
-        print(json.dumps(products[0], indent=2))
-        print("--- END PREVIEW ---")
+    if prods:
+        print("--- DIAGNOSTIC DATA ---")
+        # This will print the first product structure to your logs
+        print(json.dumps(prods[0], indent=2))
         
-    return products
+    return prods
 
-def get_v3_price(p):
-    # Try multiple V3 paths
-    price_obj = p.get("priceData") or p.get("convertedPriceData")
-    
-    # Check inside first variant if top-level is empty
+def get_price(p):
+    # Try the 4 most common Wix V3 price locations
+    price_obj = p.get("priceData") or p.get("variantsInfo", {}).get("variants", [{}])[0].get("price")
     if not price_obj and p.get("variants"):
-        v = p["variants"][0].get("variant", {})
-        price_obj = v.get("priceData") or v.get("price")
-
-    if not price_obj:
-        return "0.00 USD"
+        price_obj = p["variants"][0].get("variant", {}).get("priceData")
     
-    price = price_obj.get("price") or price_obj.get("amount") or 0
-    currency = price_obj.get("currency") or "USD"
-    return f"{float(price):.2f} {currency}"
+    val = price_obj.get("price") or price_obj.get("amount") or "0.00"
+    cur = price_obj.get("currency") or "USD"
+    return f"{float(val):.2f} {cur}"
 
-def get_v3_stock(p):
-    # Check top-level stock or inventory
-    stock_obj = p.get("stock") or p.get("inventory")
-    
-    # Check inside first variant
-    if not stock_obj and p.get("variants"):
-        v = p["variants"][0].get("variant", {})
-        stock_obj = v.get("stock") or v.get("inventory")
+def get_stock(p):
+    # Try the 3 most common Wix V3 stock locations
+    stock_obj = p.get("stock") or p.get("inventory") or p.get("variantsInfo", {}).get("variants", [{}])[0].get("inventory")
+    status = stock_obj.get("inventoryStatus") or stock_obj.get("availabilityStatus") or ""
+    return "in stock" if status in ["IN_STOCK", "AVAILABLE"] else "out of stock"
 
-    if not stock_obj:
-        return "out of stock"
-
-    # Try different Wix status keys
-    status = stock_obj.get("inventoryStatus") or stock_obj.get("status") or ""
-    if status in ["IN_STOCK", "PARTIALLY_OUT_OF_STOCK", "AVAILABLE"]:
-        return "in stock"
-    return "out of stock"
-
-def generate():
-    products = fetch_all_products()
+def run():
+    products = fetch_all()
     rows = []
+    # This dummy ID forces Git to see a change every single time
+    sync_id = datetime.now().strftime("%Y%m%d%H%M%S")
+    
     for p in products:
-        price = get_v3_price(p)
-        stock = get_v3_stock(p)
+        price = get_price(p)
+        stock = get_stock(p)
         desc = re.sub(r"<[^>]+>", "", p.get("description", "")).strip()
         
         rows.append({
             "id": p.get("id"),
             "title": p.get("name"),
-            "description": desc[:9999] or p.get("name"),
+            "description": f"{desc[:5000]} (Sync:{sync_id})", # Forces file change
             "availability": stock,
             "condition": "new",
             "price": price,
@@ -102,10 +73,9 @@ def generate():
         })
         
     with open("feed.csv", "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=FEED_COLUMNS)
+        writer = csv.DictWriter(f, fieldnames=rows[0].keys())
         writer.writeheader()
         writer.writerows(rows)
 
 if __name__ == "__main__":
-    generate()
-    print("Process Complete.")
+    run()
