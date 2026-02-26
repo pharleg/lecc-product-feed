@@ -1,12 +1,11 @@
 """
 Lake Erie Clothing Company - Meta Product Feed Generator
-Final Complete Version: Explicit V3 Field Requests
+Final Corrected Version for Wix Catalog V3 API
 """
 
 import os
 import csv
 import re
-import json
 import requests
 from datetime import datetime
 
@@ -29,21 +28,16 @@ FEED_COLUMNS = [
     "price", "link", "image_link", "brand", "google_product_category",
 ]
 
-BRAND = "Lake Erie Clothing Company"
-STORE_BASE_URL = "https://www.lakeerieclothing.com"
-GOOGLE_CATEGORY = "Apparel & Accessories > Clothing"
-
-
 def fetch_all_products():
     products = []
     cursor = None
 
     while True:
-        # MANDATORY: Explicitly request fields or V3 returns null/None
+        # MANDATORY: Explicitly request 'variantsInfo' in the fields array for V3
         payload = {
             "query": {
                 "cursorPaging": {"limit": 100},
-                "fields": ["priceData", "stock", "variants", "name", "slug", "description", "media"]
+                "fields": ["name", "slug", "description", "media", "variantsInfo"]
             }
         }
         if cursor:
@@ -62,85 +56,61 @@ def fetch_all_products():
             break
         cursor = next_cursor
 
-    print(f"Total products fetched: {len(products)}")
     return products
 
-
-def get_price(product):
-    # Try top-level priceData first
-    price_data = product.get("priceData", {})
+def get_v3_data(product):
+    # Wix V3 stores price and stock in variantsInfo.variants
+    variants_info = product.get("variantsInfo", {})
+    variants = variants_info.get("variants", [])
     
-    # Fallback to the first variant if top-level is empty
-    if not price_data.get("price"):
-        variants = product.get("variants", [])
-        if variants:
-            price_data = variants[0].get("variant", {}).get("priceData", {})
-
-    price = price_data.get("price", 0)
-    currency = price_data.get("currency", "USD")
+    # Use the first variant for default price and stock
+    first_variant = variants[0] if variants else {}
     
-    try:
-        return f"{float(price):.2f} {currency}"
-    except (ValueError, TypeError):
-        return f"0.00 {currency}"
-
-
-def get_availability(product):
-    # Try top-level stock first
-    stock = product.get("stock", {})
+    # V3 Price Path: price -> actualPrice -> amount
+    price_obj = first_variant.get("price", {})
+    actual_price = price_obj.get("actualPrice", {})
+    price = actual_price.get("amount", "0.00")
+    currency = actual_price.get("currency", "USD")
     
-    # Fallback to variant stock
-    if not stock.get("inventoryStatus"):
-        variants = product.get("variants", [])
-        if variants:
-            stock = variants[0].get("variant", {}).get("stock", {})
-
-    status = stock.get("inventoryStatus", "")
+    # V3 Stock Path: inventory -> availabilityStatus
+    inventory = first_variant.get("inventory", {})
+    status = inventory.get("availabilityStatus", "")
     
-    if status == "IN_STOCK" or status == "PARTIALLY_OUT_OF_STOCK":
-        return "in stock"
-    return "out of stock"
+    # Map V3 status to Meta requirements
+    availability = "in stock" if status == "IN_STOCK" else "out of stock"
+    
+    return f"{float(price):.2f} {currency}", availability
 
-
-def build_feed_rows(products):
+def generate():
+    products = fetch_all_products()
     rows = []
-    for product in products:
-        title = product.get("name", "")
-        description = product.get("description", "")
-        # Strip HTML for Meta compatibility
-        description = re.sub(r"<[^>]+>", "", description).strip()
-        description = description[:9999] if description else title
-
+    
+    for p in products:
+        price, availability = get_v3_data(p)
+        desc = re.sub(r"<[^>]+>", "", p.get("description", "")).strip()
+        
         rows.append({
-            "id": product.get("id", ""),
-            "title": title,
-            "description": description,
-            "availability": get_availability(product),
+            "id": p.get("id"),
+            "title": p.get("name"),
+            "description": desc[:9999] or p.get("name"),
+            "availability": availability,
             "condition": "new",
-            "price": get_price(product),
-            "link": f"{STORE_BASE_URL}/product-page/{product.get('slug', '')}",
-            "image_link": product.get("media", {}).get("main", {}).get("image", {}).get("url", ""),
-            "brand": BRAND,
-            "google_product_category": GOOGLE_CATEGORY,
+            "price": price,
+            "link": f"https://www.lakeerieclothing.com/product-page/{p.get('slug')}",
+            "image_link": p.get("media", {}).get("main", {}).get("image", {}).get("url", ""),
+            "brand": "Lake Erie Clothing Company",
+            "google_product_category": "Apparel & Accessories > Clothing"
         })
-    return rows
-
-
-def write_csv(rows, output_path="feed.csv"):
-    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        
+    with open("feed.csv", "w", newline="", encoding="utf-8") as f:
+        # Header must be row 1 for Meta compatibility
         writer = csv.DictWriter(f, fieldnames=FEED_COLUMNS)
         writer.writeheader()
         writer.writerows(rows)
-    print(f"Feed written to {output_path} ({len(rows)} products)")
-
-
-def main():
-    print("Starting LECC Meta product feed generation...")
-    products = fetch_all_products()
-    rows = build_feed_rows(products)
-    write_csv(rows)
-    print("Done!")
-
+        # Add timestamp at very end to force Git update without breaking columns
+        f.write(f"\n# Feed Updated: {datetime.now().isoformat()}")
 
 if __name__ == "__main__":
-    main()
+    print("Starting LECC Meta product feed generation...")
+    generate()
+    print("Feed generation complete.")
