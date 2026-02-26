@@ -53,7 +53,11 @@ def fetch_all_products():
             }
         }
 
+        print(f"Sending request to: {WIX_API_URL}")
+        print(f"Headers (redacted key): wix-site-id={WIX_SITE_ID}, wix-account-id={WIX_ACCOUNT_ID}")
         response = requests.post(WIX_API_URL, headers=HEADERS, json=payload)
+        print(f"Response status: {response.status_code}")
+        print(f"Response body: {response.text[:1000]}")
         response.raise_for_status()
         data = response.json()
 
